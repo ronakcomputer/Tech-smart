@@ -26,7 +26,7 @@ const TS_DEFAULT_PRODUCTS = [
     brand: 'HP',
     model: 'HP 15 Core i5 12th Gen',
     configuration: 'Intel Core i5-1235U, 8GB RAM, 512GB SSD, 15.6" FHD, Windows 11, Integrated Graphics',
-    price: 47990,
+    price: 1,
     status: 'available',
     featured: true,
     image: ''
