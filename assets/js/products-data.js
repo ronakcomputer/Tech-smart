@@ -1,19 +1,16 @@
 /* ============================================================
    TechSmart — Product data layer
    ------------------------------------------------------------
-   Products live in the browser's localStorage so the admin
-   panel can add/edit/delete them with no server or database.
-   The array below is only the STARTING catalogue — the first
-   time the site loads on a browser, it is copied into
-   localStorage. After that, localStorage is the source of
-   truth on that browser/device.
+   Products now live in Firebase Firestore (a free cloud
+   database) once you fill in assets/js/firebase-config.js — see
+   README.md → "Cloud Setup (Firebase)". That makes every admin
+   panel change show up for every visitor, on every device,
+   within a second or two, with no manual re-uploading.
 
-   IMPORTANT (read the README): localStorage is per-browser,
-   per-device. Edits made in the admin panel on your shop PC
-   will not automatically show up for a customer browsing on
-   their own phone unless you wire up a real backend. See
-   README.md → "Making product changes visible to everyone"
-   for the two easy ways to fix that (free options included).
+   Until firebase-config.js has real values in it, this file
+   automatically falls back to the browser's local storage
+   (exactly like before) so the site keeps working out of the
+   box — it just won't sync between devices until you connect it.
    ============================================================ */
 
 const TS_STORAGE_KEY = 'techsmart_products_v1';
@@ -26,7 +23,7 @@ const TS_DEFAULT_PRODUCTS = [
     brand: 'HP',
     model: 'HP 15 Core i5 12th Gen',
     configuration: 'Intel Core i5-1235U, 8GB RAM, 512GB SSD, 15.6" FHD, Windows 11, Integrated Graphics',
-    price: 1,
+    price: 47990,
     status: 'available',
     featured: true,
     image: ''
@@ -144,7 +141,31 @@ const TS_DEFAULT_PRODUCTS = [
 ];
 
 const TSData = (function () {
-  function _readRaw() {
+  let _cloudMode = false;   // true once connected to Firestore
+  let _db = null;
+  let _cache = [];          // current known product list (kept live)
+  let _ready = false;       // true once the first load (cloud or local) has completed
+  const _listeners = [];    // callbacks to re-render pages when data changes
+
+  function _notify() {
+    const snapshot = _cache.slice();
+    _listeners.forEach(fn => { try { fn(snapshot); } catch (e) { /* one bad listener shouldn't break the rest */ } });
+  }
+
+  /* Subscribe to every future data change (add/edit/delete, from
+     ANY device). Fires immediately with current data if it's
+     already loaded, then again every time it changes. */
+  function onUpdate(fn) {
+    _listeners.push(fn);
+    if (_ready) fn(_cache.slice());
+  }
+
+  function isReady() { return _ready; }
+  function isCloud() { return _cloudMode; }
+
+  /* ---------------- local storage engine (fallback) ---------------- */
+
+  function _localReadRaw() {
     try {
       const raw = localStorage.getItem(TS_STORAGE_KEY);
       return raw ? JSON.parse(raw) : null;
@@ -154,7 +175,7 @@ const TSData = (function () {
     }
   }
 
-  function _write(list) {
+  function _localWrite(list) {
     try {
       localStorage.setItem(TS_STORAGE_KEY, JSON.stringify(list));
       return true;
@@ -164,48 +185,126 @@ const TSData = (function () {
     }
   }
 
-  function init() {
-    const existing = _readRaw();
-    if (!existing) {
-      _write(TS_DEFAULT_PRODUCTS);
+  function _loadLocalIntoCache() {
+    let list = _localReadRaw();
+    if (!list) {
+      list = TS_DEFAULT_PRODUCTS.slice();
+      _localWrite(list);
     }
+    _cache = list;
+    _ready = true;
+    _notify();
   }
 
-  function getAll() {
-    return _readRaw() || TS_DEFAULT_PRODUCTS.slice();
+  /* ---------------- cloud (Firestore) engine ---------------- */
+
+  function _cloudConfigured() {
+    return typeof TS_FIREBASE_CONFIG !== 'undefined' &&
+      typeof firebase !== 'undefined' &&
+      TS_FIREBASE_CONFIG.apiKey &&
+      TS_FIREBASE_CONFIG.apiKey.indexOf('YOUR_') !== 0;
   }
 
-  function getByCategory(category) {
-    return getAll().filter(p => p.category === category);
+  function _listenCloud() {
+    _db.collection('products').onSnapshot(function (snap) {
+      _cache = snap.docs.map(d => d.data());
+      _ready = true;
+      _notify();
+    }, function (err) {
+      console.warn('TechSmart: Firestore live updates stopped working, switching to local data for this visit', err);
+      _cloudMode = false;
+      _loadLocalIntoCache();
+    });
   }
 
-  function getById(id) {
-    return getAll().find(p => p.id === id) || null;
+  function _subscribeCloud() {
+    // A one-time marker doc tells us whether the starter catalogue
+    // has already been copied into this Firestore project, so we
+    // never accidentally re-add products the owner deleted on purpose.
+    _db.collection('meta').doc('catalogueInit').get().then(function (metaDoc) {
+      if (metaDoc.exists) { _listenCloud(); return; }
+      const batch = _db.batch();
+      TS_DEFAULT_PRODUCTS.forEach(p => batch.set(_db.collection('products').doc(p.id), p));
+      batch.set(_db.collection('meta').doc('catalogueInit'), { seededAt: new Date().toISOString() });
+      batch.commit().then(_listenCloud).catch(function (err) {
+        console.warn('TechSmart: could not seed starter catalogue into Firestore, using local data instead', err);
+        _cloudMode = false;
+        _loadLocalIntoCache();
+      });
+    }).catch(function (err) {
+      console.warn('TechSmart: Firestore is unreachable (check your config/rules in firebase-config.js) — using local data for this visit', err);
+      _cloudMode = false;
+      _loadLocalIntoCache();
+    });
   }
 
+  function init() {
+    if (_cloudConfigured()) {
+      try {
+        firebase.initializeApp(TS_FIREBASE_CONFIG);
+        _db = firebase.firestore();
+        _cloudMode = true;
+        _subscribeCloud();
+        return;
+      } catch (e) {
+        console.warn('TechSmart: Firebase failed to start, using local data instead', e);
+        _cloudMode = false;
+      }
+    }
+    _loadLocalIntoCache();
+  }
+
+  /* ---------------- reads (always from the live in-memory cache) ---------------- */
+
+  function getAll() { return _cache.slice(); }
+  function getByCategory(category) { return getAll().filter(p => p.category === category); }
+  function getById(id) { return getAll().find(p => p.id === id) || null; }
   function getFeatured(limit) {
     const feats = getAll().filter(p => p.featured && p.status === 'available');
     return limit ? feats.slice(0, limit) : feats;
   }
 
+  /* ---------------- writes (return a Promise<boolean> either way,
+     so calling code doesn't need to know if it's cloud or local) ---------------- */
+
   function save(product) {
+    if (_cloudMode) {
+      return _db.collection('products').doc(product.id).set(product)
+        .then(() => true)
+        .catch(err => { console.warn('TechSmart: cloud save failed', err); return false; });
+    }
     const list = getAll();
     const idx = list.findIndex(p => p.id === product.id);
-    if (idx > -1) {
-      list[idx] = product;
-    } else {
-      list.unshift(product);
-    }
-    return _write(list);
+    if (idx > -1) list[idx] = product; else list.unshift(product);
+    const ok = _localWrite(list);
+    if (ok) { _cache = list; _notify(); }
+    return Promise.resolve(ok);
   }
 
   function remove(id) {
+    if (_cloudMode) {
+      return _db.collection('products').doc(id).delete()
+        .then(() => true)
+        .catch(err => { console.warn('TechSmart: cloud delete failed', err); return false; });
+    }
     const list = getAll().filter(p => p.id !== id);
-    return _write(list);
+    const ok = _localWrite(list);
+    if (ok) { _cache = list; _notify(); }
+    return Promise.resolve(ok);
   }
 
   function resetToDefaults() {
-    return _write(TS_DEFAULT_PRODUCTS.slice());
+    if (_cloudMode) {
+      return _db.collection('products').get().then(snap => {
+        const batch = _db.batch();
+        snap.docs.forEach(d => batch.delete(d.ref));
+        TS_DEFAULT_PRODUCTS.forEach(p => batch.set(_db.collection('products').doc(p.id), p));
+        return batch.commit().then(() => true);
+      }).catch(err => { console.warn('TechSmart: cloud reset failed', err); return false; });
+    }
+    const ok = _localWrite(TS_DEFAULT_PRODUCTS.slice());
+    if (ok) { _cache = TS_DEFAULT_PRODUCTS.slice(); _notify(); }
+    return Promise.resolve(ok);
   }
 
   function makeId(category) {
@@ -217,8 +316,9 @@ const TSData = (function () {
     return '₹' + num.toLocaleString('en-IN');
   }
 
-  /* ---- Service / contact leads (also stored locally so the
-     owner can see recent enquiries even without email set up) ---- */
+  /* ---- Service / contact leads: unchanged, still per-browser only.
+     This is just a convenience backup — every enquiry always also
+     goes straight to WhatsApp regardless, so this was left as-is. ---- */
   function saveLead(lead) {
     try {
       const list = JSON.parse(localStorage.getItem(TS_LEADS_KEY) || '[]');
@@ -233,7 +333,8 @@ const TSData = (function () {
   }
 
   return {
-    init, getAll, getByCategory, getById, getFeatured,
+    init, onUpdate, isReady, isCloud,
+    getAll, getByCategory, getById, getFeatured,
     save, remove, resetToDefaults, makeId, fmtPrice,
     saveLead, getLeads
   };

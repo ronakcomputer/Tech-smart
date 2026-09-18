@@ -73,9 +73,14 @@ function ts_wireLogout() {
 function ts_showDashboard() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
-  ts_renderAdminTable();
   ts_renderLeads();
-  ts_renderStats();
+  // Re-renders on first load AND every time products change anywhere
+  // (this device, another device, a customer's device — any edit
+  // reaches this table live, without a page refresh).
+  TSData.onUpdate(function () {
+    ts_renderAdminTable();
+    ts_renderStats();
+  });
 }
 
 /* ---------------- Product table ---------------- */
@@ -96,6 +101,12 @@ function ts_renderStats() {
 function ts_renderAdminTable() {
   const tbody = document.getElementById('adminTableBody');
   const catFilter = document.getElementById('adminFilterCategory').value;
+
+  if (!TSData.isReady()) {
+    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">Loading products…</td></tr>`;
+    return;
+  }
+
   let list = TSData.getAll();
   if (catFilter) list = list.filter(p => p.category === catFilter);
 
@@ -167,9 +178,14 @@ function ts_deleteProduct(id) {
   const p = TSData.getById(id);
   if (!p) return;
   if (!confirm(`Delete "${p.model}"? This cannot be undone.`)) return;
-  TSData.remove(id);
-  ts_renderAdminTable();
-  ts_renderStats();
+  TSData.remove(id).then(function (ok) {
+    if (!ok) {
+      alert('Could not delete — check your internet connection and try again.');
+      return;
+    }
+    ts_renderAdminTable();
+    ts_renderStats();
+  });
 }
 
 function ts_wireProductForm() {
@@ -199,14 +215,21 @@ function ts_wireProductForm() {
     };
     if (!product.brand || !product.model || !product.configuration || !product.price) return;
 
-    const ok = TSData.save(product);
-    if (!ok) {
-      alert('Could not save — the image may be too large for browser storage. Try a smaller photo (under ~500KB) or paste an image URL instead.');
-      return;
-    }
-    ts_closeProductModal();
-    ts_renderAdminTable();
-    ts_renderStats();
+    const submitBtn = form.querySelector('[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+
+    TSData.save(product).then(function (ok) {
+      if (submitBtn) submitBtn.disabled = false;
+      if (!ok) {
+        alert(TSData.isCloud()
+          ? 'Could not save — check your internet connection and try again.'
+          : 'Could not save — the image may be too large for browser storage. Try a smaller photo (under ~500KB) or paste an image URL instead.');
+        return;
+      }
+      ts_closeProductModal();
+      ts_renderAdminTable();
+      ts_renderStats();
+    });
   });
 }
 
@@ -248,9 +271,14 @@ function ts_wireResetCatalogue() {
   if (!btn) return;
   btn.addEventListener('click', () => {
     if (!confirm('Reset the catalogue back to the sample starter products? Your custom products/edits will be lost.')) return;
-    TSData.resetToDefaults();
-    ts_renderAdminTable();
-    ts_renderStats();
+    TSData.resetToDefaults().then(function (ok) {
+      if (!ok) {
+        alert('Could not reset — check your internet connection and try again.');
+        return;
+      }
+      ts_renderAdminTable();
+      ts_renderStats();
+    });
   });
 }
 

@@ -14,6 +14,7 @@ contact.html       Address, map, hours, contact form
 admin/index.html   Admin panel (login-protected) — add/edit/delete products
 assets/css/        Stylesheets
 assets/js/         All site logic + product data
+  firebase-config.js  Your Firebase project keys (fill in for Cloud Setup, section 3a)
 robots.txt         Tells search engines what to crawl
 sitemap.xml        List of pages for Google Search Console
 ```
@@ -71,17 +72,66 @@ Open **admin/index.html** (or click "Admin Login" in the website footer).
 - From the **Enquiries** tab you can see a backup log of enquiries submitted on that browser (the actual enquiry always also goes straight to your WhatsApp — this tab is just a convenience).
 - Product photos: upload a photo (under 1.5MB) or paste an image URL. If you leave it blank, a neat placeholder graphic is shown automatically.
 
-### Important — please read: how product data is stored
-This admin panel has **no server or database** — it stores your products directly in the browser's local storage on the device you're using. This keeps the site simple and free to run, but it has one real limitation:
+### How product data is stored
+The site now supports **two modes**, and picks automatically based on whether you've set up Firebase (see "Cloud Setup" below):
 
-> **Changes you make in the admin panel are only saved on that one browser/device.** A customer visiting your site from their own phone will always see the original starter catalogue, not your live edits — because their phone has no access to your shop PC's local storage.
+- **Not set up yet (default):** Products save to the browser's local storage — same as before. Changes only show up on that one browser/device.
+- **Cloud Setup done:** Products save to Firebase Firestore (a free cloud database). Any change in the admin panel — from any device — appears for every visitor within a second or two, with no re-uploading.
 
-Two ways to fix this properly when you're ready:
+The admin **login is a screen-lock, not real security** — anyone who can view the page's source code could in theory find a way around it. Don't rely on it to protect anything sensitive; it's meant to stop casual visitors from opening the panel by accident. This is unchanged whether or not you set up the cloud database below.
 
-1. **Simplest (free, a little manual work):** Whenever you update products, open `assets/js/products-data.js`, edit the `TS_DEFAULT_PRODUCTS` list near the top with your new products, save the file, and re-upload it to your hosting. This becomes the catalogue everyone sees, everywhere, instantly.
-2. **Fully automatic (recommended long-term):** Connect the admin panel to a free lightweight backend such as Google Sheets (via a script), Firebase, or Supabase, so edits save to the cloud and every visitor sees them immediately. This needs a developer to wire up (happy to help if you want this built later) — it's a bigger step up from a simple static site.
+---
 
-The admin **login is a screen-lock, not real security** — anyone who can view the page's source code could in theory find a way around it. Don't rely on it to protect anything sensitive; it's meant to stop casual visitors from opening the panel by accident.
+## 3a. Cloud Setup (Firebase) — make admin changes visible to everyone
+
+This connects the admin panel to **Firebase Firestore**, a free cloud database from Google. It takes about 5–10 minutes, no coding needed, and stays free for a small shop site (the free tier covers far more reads/writes than a site like this will ever use).
+
+**Step 1 — Create a Firebase project**
+1. Go to [console.firebase.google.com](https://console.firebase.google.com) and sign in with any Google account.
+2. Click **Add project**, give it any name (e.g. "TechSmart"), and finish the setup wizard (you can decline Google Analytics — not needed).
+
+**Step 2 — Create the database**
+1. In the left menu, go to **Build → Firestore Database**.
+2. Click **Create database**. Choose a location close to India (e.g. `asia-south1 (Mumbai)`).
+3. Choose **Start in test mode** for now — this gets you running quickly. (Step 4 below replaces this with a proper permanent rule.)
+
+**Step 3 — Register a web app and get your config**
+1. Click the **gear icon → Project settings**.
+2. Under "Your apps", click the **`</>`** (Web) icon.
+3. Give it any nickname (e.g. "TechSmart Website") and click **Register app** — you don't need Firebase Hosting.
+4. Firebase shows a code block with a `firebaseConfig` object — copy the values (`apiKey`, `authDomain`, `projectId`, etc.).
+5. Open `assets/js/firebase-config.js` in this project and paste your values into `TS_FIREBASE_CONFIG`, replacing the `YOUR_...` placeholders.
+
+**Step 4 — Set the security rules**
+1. Back in **Firestore Database → Rules** tab, replace the contents with:
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /products/{productId} {
+         allow read: if true;
+         allow write: if true;
+       }
+       match /meta/{docId} {
+         allow read: if true;
+         allow write: if true;
+       }
+     }
+   }
+   ```
+2. Click **Publish**.
+
+   > **Why `write: if true`?** Like the admin login itself, this admin panel has no real server-side authentication, so there's no way to check "is this really the shop owner?" from Firestore's side alone. This matches the same security level the site already has (a screen-lock, not a lock-and-key) — it's fine for a small local shop catalogue, but don't store anything sensitive in it. If you want real protection later (so only a logged-in admin can write), that needs Firebase Authentication added on top — happy to help set that up when you're ready.
+
+**Step 5 — Test it**
+1. Re-upload the whole `techsmart` folder to your hosting (all files changed slightly — Firestore support was added throughout).
+2. Open the site on your phone and on your PC at the same time.
+3. Log into `/admin/` on one device and edit a product's price.
+4. Watch it update on the other device within a second or two, with no refresh needed.
+
+The very first time the site connects to your new Firestore database, it automatically copies in the starter catalogue (the same sample products you see today) — after that, Firestore is the single source of truth everywhere.
+
+If `firebase-config.js` is ever left with the placeholder `YOUR_...` values (e.g. before you've done this setup, or if you want to test offline), the site quietly falls back to the old local-storage behaviour — nothing breaks either way.
 
 ---
 

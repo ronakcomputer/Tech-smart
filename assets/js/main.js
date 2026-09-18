@@ -101,10 +101,21 @@ function ts_escape(str) {
 
 function ts_renderFeatured() {
   const grid = document.getElementById('featuredGrid');
-  const items = TSData.getFeatured(6);
-  grid.innerHTML = items.length
-    ? items.map(ts_productCardHTML).join('')
-    : '<div class="empty-state">Featured products will appear here once added in the admin panel.</div>';
+
+  function refresh() {
+    if (!TSData.isReady()) {
+      grid.innerHTML = '<div class="empty-state">Loading…</div>';
+      return;
+    }
+    const items = TSData.getFeatured(6);
+    grid.innerHTML = items.length
+      ? items.map(ts_productCardHTML).join('')
+      : '<div class="empty-state">Featured products will appear here once added in the admin panel.</div>';
+  }
+
+  // Re-renders on first load AND every time products change anywhere
+  // (another device's admin edit, cloud sync, etc.) — no refresh needed.
+  TSData.onUpdate(refresh);
 }
 
 /* Catalogue page (laptops.html / printers.html) reads
@@ -119,14 +130,7 @@ function ts_renderCatalogue() {
   const searchInput = document.getElementById('filterSearch');
   const countEl = document.getElementById('resultCount');
 
-  const all = TSData.getByCategory(category);
-
-  // populate brand filter dynamically
-  if (brandSelect) {
-    const brands = Array.from(new Set(all.map(p => p.brand))).sort();
-    brandSelect.innerHTML = '<option value="">All Brands</option>' +
-      brands.map(b => `<option value="${ts_escape(b)}">${ts_escape(b)}</option>`).join('');
-  }
+  let all = [];
 
   function render() {
     let list = all.slice();
@@ -151,10 +155,30 @@ function ts_renderCatalogue() {
     if (countEl) countEl.textContent = list.length + (list.length === 1 ? ' product' : ' products');
   }
 
+  function refreshFromData() {
+    if (!TSData.isReady()) {
+      grid.innerHTML = '<div class="empty-state">Loading…</div>';
+      return;
+    }
+    all = TSData.getByCategory(category);
+
+    // populate brand filter dynamically, keeping the current selection if possible
+    if (brandSelect) {
+      const current = brandSelect.value;
+      const brands = Array.from(new Set(all.map(p => p.brand))).sort();
+      brandSelect.innerHTML = '<option value="">All Brands</option>' +
+        brands.map(b => `<option value="${ts_escape(b)}">${ts_escape(b)}</option>`).join('');
+      if (brands.includes(current)) brandSelect.value = current;
+    }
+
+    render();
+  }
+
   [brandSelect, stockSelect, sortSelect].forEach(el => el && el.addEventListener('change', render));
   if (searchInput) searchInput.addEventListener('input', render);
 
-  render();
+  // Re-renders on first load AND every time products change anywhere.
+  TSData.onUpdate(refreshFromData);
 }
 
 /* ---------------- WhatsApp inquiry modal ---------------- */
