@@ -17,16 +17,23 @@ const TS_CONFIG = {
 };
 
 document.addEventListener('DOMContentLoaded', function () {
-  ts_injectYear();
-  ts_navToggle();
-  ts_highlightActiveNav();
-  ts_wireWhatsappModal();
-  ts_wireServiceForm();
-  ts_wireContactForm();
+  ts_safe(ts_injectYear);
+  ts_safe(ts_navToggle);
+  ts_safe(ts_highlightActiveNav);
+  ts_safe(ts_wireWhatsappModal);
+  ts_safe(ts_wireServiceForm);
+  ts_safe(ts_wireContactForm);
 
-  if (document.getElementById('featuredGrid')) ts_renderFeatured();
-  if (document.getElementById('productGrid')) ts_renderCatalogue();
+  if (document.getElementById('featuredGrid')) ts_safe(ts_renderFeatured);
+  if (document.getElementById('productGrid')) ts_safe(ts_renderCatalogue);
 });
+
+// Runs each setup step independently — if one part of the page has a
+// problem, it's logged to the console instead of silently breaking
+// everything else on the page (like the mobile menu).
+function ts_safe(fn) {
+  try { fn(); } catch (err) { console.error('TechSmart:', fn.name, 'failed:', err); }
+}
 
 function ts_injectYear() {
   document.querySelectorAll('[data-year]').forEach(el => {

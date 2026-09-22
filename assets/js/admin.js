@@ -3,16 +3,19 @@
    ------------------------------------------------------------
    Access is protected by Firebase Authentication (Google
    Sign-In). Anyone can attempt to sign in with a Google
-   account, but only the email address(es) listed in
-   TS_ADMIN_ALLOWED_EMAILS (assets/js/firebase-config.js) are
+   account, but only TS_BOOTSTRAP_ADMIN_EMAIL (the permanent
+   owner login, set in assets/js/firebase-config.js) and any
+   email added via Settings → Users (stored in the Firestore
+   "admins" collection, with a role of admin/editor/viewer) are
    let into the dashboard — everyone else is signed out
-   immediately. For this to also be enforced on the database
-   side (not just hidden in the browser), make sure your
-   Firestore security rules check request.auth.token.email
-   against the same list — see README.md.
+   immediately. This is enforced both here (for the UI) and in
+   Firestore's own security rules (for the database itself) —
+   see README.md.
    ============================================================ */
 
 let ts_currentUser = null;
+let ts_currentRole = null; // 'admin' | 'editor' | 'viewer'
+let ts_unsubAdmins = null;
 
 document.addEventListener('DOMContentLoaded', function () {
   ts_injectYear();
@@ -21,15 +24,11 @@ document.addEventListener('DOMContentLoaded', function () {
   ts_wireProductForm();
   ts_wireResetCatalogue();
   ts_wireImagePreview();
+  ts_wireAddUserForm();
   ts_watchAuthState();
 });
 
 /* ---------------- Auth (Firebase Authentication — Google Sign-In) ---------------- */
-
-function ts_isAllowedEmail(email) {
-  return !!email && typeof TS_ADMIN_ALLOWED_EMAILS !== 'undefined' &&
-    TS_ADMIN_ALLOWED_EMAILS.map(e => e.toLowerCase()).includes(email.toLowerCase());
-}
 
 function ts_watchAuthState() {
   if (typeof firebase === 'undefined' || !firebase.auth) {
@@ -37,20 +36,31 @@ function ts_watchAuthState() {
     return;
   }
   firebase.auth().onAuthStateChanged(function (user) {
-    if (user && ts_isAllowedEmail(user.email)) {
-      ts_currentUser = user;
+    if (!user) {
+      ts_currentUser = null; ts_currentRole = null;
+      ts_showLoginScreen();
+      return;
+    }
+    const email = (user.email || '').toLowerCase();
+    if (email === TS_BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
+      ts_currentUser = user; ts_currentRole = 'admin';
       document.getElementById('loginError').style.display = 'none';
       ts_showDashboard(user);
-    } else if (user) {
-      // Signed in with Google, but this email isn't authorised.
-      ts_currentUser = null;
-      firebase.auth().signOut();
-      document.getElementById('loginError').style.display = 'block';
-      ts_showLoginScreen();
-    } else {
-      ts_currentUser = null;
-      ts_showLoginScreen();
+      return;
     }
+    TSData.getMyRole(email).then(function (role) {
+      if (role === 'admin' || role === 'editor' || role === 'viewer') {
+        ts_currentUser = user; ts_currentRole = role;
+        document.getElementById('loginError').style.display = 'none';
+        ts_showDashboard(user);
+      } else {
+        // Signed in with Google, but this email has no role assigned.
+        ts_currentUser = null; ts_currentRole = null;
+        firebase.auth().signOut();
+        document.getElementById('loginError').style.display = 'block';
+        ts_showLoginScreen();
+      }
+    });
   });
 }
 
@@ -84,24 +94,36 @@ function ts_showLoginScreen() {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('dashboard').style.display = 'none';
   document.getElementById('adminUserBadge').style.display = 'none';
+  if (ts_unsubAdmins) { ts_unsubAdmins(); ts_unsubAdmins = null; }
 }
+
+const TS_ROLE_LABEL = { admin: 'Admin', editor: 'Editor', viewer: 'Viewer' };
 
 function ts_showDashboard(user) {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('dashboard').style.display = 'block';
 
-  // Show who's currently logged in, in the topbar and the Settings tab.
+  // Show who's currently logged in — and their role — in the topbar and Settings tab.
   const badge = document.getElementById('adminUserBadge');
   badge.style.display = 'flex';
   document.getElementById('adminUserPhoto').src = user.photoURL || '../assets/img/logo.png';
   document.getElementById('adminUserName').textContent = user.displayName || 'Admin';
-  document.getElementById('adminUserEmail').textContent = user.email || '';
+  document.getElementById('adminUserEmail').textContent = (user.email || '') + '  ·  ' + TS_ROLE_LABEL[ts_currentRole];
   const sName = document.getElementById('settingsUserName');
   const sEmail = document.getElementById('settingsUserEmail');
-  if (sName) sName.textContent = user.displayName || 'Admin';
+  if (sName) sName.textContent = (user.displayName || 'Admin') + '  ·  ' + TS_ROLE_LABEL[ts_currentRole];
   if (sEmail) sEmail.textContent = user.email || '';
 
-  ts_renderLeads();
+  ts_applyRoleGating();
+
+  const usersCard = document.getElementById('usersCard');
+  if (usersCard) usersCard.style.display = ts_currentRole === 'admin' ? 'block' : 'none';
+  if (ts_currentRole === 'admin') {
+    if (ts_unsubAdmins) ts_unsubAdmins();
+    ts_unsubAdmins = TSData.subscribeAdmins(ts_renderUsersList);
+  }
+
+  TSData.subscribeLeads(ts_renderLeads);
   // Re-renders on first load AND every time products change anywhere
   // (this device, another device, a customer's device — any edit
   // reaches this table live, without a page refresh).
@@ -109,6 +131,24 @@ function ts_showDashboard(user) {
     ts_renderAdminTable();
     ts_renderStats();
   });
+}
+
+/* Viewer = read-only everywhere. Editor = can add/edit products but
+   not delete them or reset the catalogue, and can't manage users.
+   Admin = everything. */
+function ts_applyRoleGating() {
+  const isAdmin = ts_currentRole === 'admin';
+  const canEdit = isAdmin || ts_currentRole === 'editor';
+  document.body.setAttribute('data-role', ts_currentRole || '');
+
+  const addBtn = document.getElementById('addProductBtn');
+  if (addBtn) addBtn.style.display = canEdit ? 'inline-flex' : 'none';
+
+  const resetBtn = document.getElementById('resetCatalogueBtn');
+  if (resetBtn) resetBtn.style.display = isAdmin ? 'inline-flex' : 'none';
+
+  const note = document.getElementById('viewerNote');
+  if (note) note.style.display = canEdit ? 'none' : 'block';
 }
 
 /* ---------------- Product table ---------------- */
@@ -154,8 +194,10 @@ function ts_renderAdminTable() {
       <td><strong>${TSData.fmtPrice(p.price)}</strong></td>
       <td><span class="admin-pill ${p.status === 'available' ? 'admin-pill-ok' : 'admin-pill-out'}">${p.status === 'available' ? 'Available' : 'Out of Stock'}</span></td>
       <td class="admin-actions-cell">
+        ${ts_currentRole === 'viewer' ? '<span class="admin-muted">View only</span>' : `
         <button class="btn btn-ghost btn-sm" onclick="ts_editProduct('${p.id}')">Edit</button>
-        <button class="btn btn-sm admin-btn-delete" onclick="ts_deleteProduct('${p.id}')">Delete</button>
+        ${ts_currentRole === 'admin' ? `<button class="btn btn-sm admin-btn-delete" onclick="ts_deleteProduct('${p.id}')">Delete</button>` : ''}
+        `}
       </td>
     </tr>
   `).join('');
@@ -169,6 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function ts_openProductModal(id) {
+  if (ts_currentRole !== 'admin' && ts_currentRole !== 'editor') return;
   ts_editingId = id || null;
   const modal = document.getElementById('productModal');
   const form = document.getElementById('productForm');
@@ -203,6 +246,7 @@ function ts_closeProductModal() {
 function ts_editProduct(id) { ts_openProductModal(id); }
 
 function ts_deleteProduct(id) {
+  if (ts_currentRole !== 'admin') return;
   const p = TSData.getById(id);
   if (!p) return;
   if (!confirm(`Delete "${p.model}"? This cannot be undone.`)) return;
@@ -298,6 +342,7 @@ function ts_wireResetCatalogue() {
   const btn = document.getElementById('resetCatalogueBtn');
   if (!btn) return;
   btn.addEventListener('click', () => {
+    if (ts_currentRole !== 'admin') return;
     if (!confirm('Reset the catalogue back to the sample starter products? Your custom products/edits will be lost.')) return;
     TSData.resetToDefaults().then(function (ok) {
       if (!ok) {
@@ -310,14 +355,59 @@ function ts_wireResetCatalogue() {
   });
 }
 
+/* ---------------- Users (Admin / Editor / Viewer) ---------------- */
+
+function ts_renderUsersList(users) {
+  const wrap = document.getElementById('usersList');
+  if (!wrap) return;
+  const bootstrapRow = `
+    <div class="admin-user-row">
+      <div><strong>${ts_escape(TS_BOOTSTRAP_ADMIN_EMAIL)}</strong><br><span class="admin-muted">Admin · owner account, can't be removed here</span></div>
+    </div>`;
+  const otherRows = (users || []).map(u => `
+    <div class="admin-user-row">
+      <div><strong>${ts_escape(u.email)}</strong><br><span class="admin-muted">${TS_ROLE_LABEL[u.role] || u.role}</span></div>
+      <button class="btn btn-sm admin-btn-delete" onclick="ts_removeUser('${ts_escape(u.email)}')">Remove</button>
+    </div>`).join('');
+  wrap.innerHTML = bootstrapRow + otherRows;
+}
+
+function ts_wireAddUserForm() {
+  const form = document.getElementById('addUserForm');
+  if (!form) return;
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (ts_currentRole !== 'admin') return;
+    const email = document.getElementById('newUserEmail').value.trim().toLowerCase();
+    const role = document.getElementById('newUserRole').value;
+    const msg = document.getElementById('addUserMsg');
+    if (!email || email === TS_BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
+      msg.textContent = 'Enter a valid Gmail address (different from the owner account).';
+      msg.className = 'form-note admin-msg-error';
+      return;
+    }
+    TSData.setUserRole(email, role, ts_currentUser && ts_currentUser.email).then(function (ok) {
+      msg.textContent = ok ? `${email} added as ${TS_ROLE_LABEL[role]}.` : 'Could not save — check your internet connection.';
+      msg.className = ok ? 'form-note admin-msg-ok' : 'form-note admin-msg-error';
+      if (ok) form.reset();
+    });
+  });
+}
+
+function ts_removeUser(email) {
+  if (ts_currentRole !== 'admin') return;
+  if (!confirm(`Remove access for ${email}?`)) return;
+  TSData.removeUserRole(email);
+}
+
 /* ---------------- Leads / enquiries viewer ---------------- */
 
-function ts_renderLeads() {
+function ts_renderLeads(leads) {
   const wrap = document.getElementById('leadsList');
   if (!wrap) return;
-  const leads = TSData.getLeads();
+  leads = leads || [];
   if (!leads.length) {
-    wrap.innerHTML = '<div class="admin-empty">No enquiries recorded on this browser yet. Enquiries appear here after a customer submits the WhatsApp or service form on this device.</div>';
+    wrap.innerHTML = '<div class="admin-empty">No enquiries yet. They\'ll appear here the moment a customer submits the WhatsApp or service form, from any device.</div>';
     return;
   }
   wrap.innerHTML = leads.slice(0, 30).map(l => `

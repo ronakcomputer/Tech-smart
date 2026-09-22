@@ -316,15 +316,30 @@ const TSData = (function () {
     return '₹' + num.toLocaleString('en-IN');
   }
 
-  /* ---- Service / contact leads: unchanged, still per-browser only.
-     This is just a convenience backup — every enquiry always also
-     goes straight to WhatsApp regardless, so this was left as-is. ---- */
-  function saveLead(lead) {
+  /* ---- Service / contact leads: now saved to Firestore when cloud
+     mode is on, so an enquiry from ANY visitor's device shows up
+     live in the admin panel — not just enquiries made on the
+     admin's own browser. Every enquiry still also goes straight to
+     WhatsApp regardless of this. Falls back to local storage if
+     Firestore isn't set up or a save fails. ---- */
+  function _localSaveLead(entry) {
     try {
       const list = JSON.parse(localStorage.getItem(TS_LEADS_KEY) || '[]');
-      list.unshift(Object.assign({ id: Date.now(), date: new Date().toISOString() }, lead));
+      list.unshift(Object.assign({ id: Date.now() }, entry));
       localStorage.setItem(TS_LEADS_KEY, JSON.stringify(list.slice(0, 200)));
     } catch (e) { /* non-fatal */ }
+  }
+
+  function saveLead(lead) {
+    const entry = Object.assign({ date: new Date().toISOString() }, lead);
+    if (_cloudMode) {
+      _db.collection('leads').add(entry).catch(function (err) {
+        console.warn('TechSmart: could not save enquiry to cloud, saving locally instead', err);
+        _localSaveLead(entry);
+      });
+      return;
+    }
+    _localSaveLead(entry);
   }
 
   function getLeads() {
@@ -332,11 +347,70 @@ const TSData = (function () {
     catch (e) { return []; }
   }
 
+  /* Live-subscribe to enquiries (admin panel only — Firestore rules
+     restrict reading the "leads" collection to the signed-in admin
+     email). Fires immediately, then again whenever a new enquiry
+     comes in from any device. Returns an unsubscribe function. */
+  function subscribeLeads(fn) {
+    if (_cloudMode) {
+      return _db.collection('leads').orderBy('date', 'desc').limit(50).onSnapshot(function (snap) {
+        fn(snap.docs.map(d => Object.assign({ id: d.id }, d.data())));
+      }, function (err) {
+        console.warn('TechSmart: could not load enquiries from the cloud (check Firestore rules / sign-in)', err);
+        fn(getLeads());
+      });
+    }
+    fn(getLeads());
+    return function () {};
+  }
+
+  /* ---- Staff roles (Admin / Editor / Viewer), stored in Firestore
+     so they can be managed from the Settings → Users tab without
+     ever touching code. Not available in local-only mode (no cloud
+     database to store them in). ---- */
+  function getMyRole(email) {
+    if (!_cloudMode || !email) return Promise.resolve(null);
+    return _db.collection('admins').doc(email.toLowerCase()).get()
+      .then(function (doc) { return doc.exists ? doc.data().role : null; })
+      .catch(function () { return null; });
+  }
+
+  function subscribeAdmins(fn) {
+    if (!_cloudMode) { fn([]); return function () {}; }
+    return _db.collection('admins').onSnapshot(function (snap) {
+      fn(snap.docs.map(d => Object.assign({ email: d.id }, d.data())));
+    }, function (err) {
+      console.warn('TechSmart: could not load users list', err);
+      fn([]);
+    });
+  }
+
+  function setUserRole(email, role, addedByEmail) {
+    if (!_cloudMode) return Promise.resolve(false);
+    email = email.trim().toLowerCase();
+    return _db.collection('admins').doc(email).set({
+      email, role, addedBy: addedByEmail || null, addedAt: new Date().toISOString()
+    }).then(() => true).catch(function (err) {
+      console.warn('TechSmart: could not save user role', err);
+      return false;
+    });
+  }
+
+  function removeUserRole(email) {
+    if (!_cloudMode) return Promise.resolve(false);
+    return _db.collection('admins').doc(email.toLowerCase()).delete()
+      .then(() => true).catch(function (err) {
+        console.warn('TechSmart: could not remove user', err);
+        return false;
+      });
+  }
+
   return {
     init, onUpdate, isReady, isCloud,
     getAll, getByCategory, getById, getFeatured,
     save, remove, resetToDefaults, makeId, fmtPrice,
-    saveLead, getLeads
+    saveLead, getLeads, subscribeLeads,
+    getMyRole, subscribeAdmins, setUserRole, removeUserRole
   };
 })();
 

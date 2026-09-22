@@ -22,6 +22,12 @@
 }
 .btn-google:hover{ background:var(--cream-100); }
 
+.admin-user-row{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:10px 12px; border:1px solid rgba(14,18,32,.1); border-radius:10px; margin-bottom:8px;
+}
+.admin-user-row:last-child{ margin-bottom:0; }
+
 /* ---- Login screen ---- */
 .login-wrap{
   min-height:calc(100vh - 66px); display:flex; align-items:center; justify-content:center; padding:40px 20px;

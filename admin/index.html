@@ -53,7 +53,7 @@
     <div class="admin-header-row">
       <div>
         <h1>Product &amp; Enquiry Manager</h1>
-        <p>Changes save instantly to this browser. See "Settings" tab for how to change your password.</p>
+        <p>Changes sync instantly to every visitor. See the "Settings" tab to manage who has access.</p>
       </div>
       <div class="admin-panel-actions">
         <a class="btn btn-ghost btn-sm" href="../index.html" target="_blank">View Site</a>
@@ -76,6 +76,7 @@
 
     <!-- Products tab -->
     <div class="admin-tab-panel active" id="tab-products">
+      <p class="form-note" id="viewerNote" style="display:none; margin-bottom:14px;">You're signed in as a <strong>Viewer</strong> — you can see the catalogue but can't add, edit, or delete products.</p>
       <div class="admin-panel-card">
         <div class="admin-panel-head">
           <h2>All products</h2>
@@ -103,9 +104,9 @@
     <div class="admin-tab-panel" id="tab-leads">
       <div class="admin-panel-card">
         <div class="admin-panel-head">
-          <h2>Recent enquiries (this browser)</h2>
+          <h2>Recent enquiries</h2>
         </div>
-        <p class="form-note" style="margin-top:-8px;">These are enquiries submitted through this website while someone was using this exact browser/device — they're a backup log only. Every enquiry is always sent to you directly on WhatsApp when the customer taps "Send".</p>
+        <p class="form-note" style="margin-top:-8px;">Every enquiry submitted through this website — from any visitor, on any device — appears here in real time. Every enquiry is also always sent to you directly on WhatsApp when the customer taps "Send".</p>
         <div id="leadsList"></div>
       </div>
     </div>
@@ -114,9 +115,31 @@
     <div class="admin-tab-panel" id="tab-settings">
       <div class="admin-panel-card" style="max-width:480px; margin-bottom:20px;">
         <div class="admin-panel-head"><h2>Signed in as</h2></div>
-        <p class="form-note" style="margin-top:-8px;">Access is controlled by Google Sign-In — only the Google account(s) listed in <code>assets/js/firebase-config.js</code> (<code>TS_ADMIN_ALLOWED_EMAILS</code>) can open this panel. To add or remove staff, edit that list.</p>
+        <p class="form-note" style="margin-top:-8px;">Access is controlled by Google Sign-In. Admins can add or remove other staff below — no code changes needed.</p>
         <p class="form-note"><strong id="settingsUserName"></strong><br><span id="settingsUserEmail"></span></p>
         <button class="btn admin-btn-delete btn-sm" id="settingsLogoutBtn">Log Out</button>
+      </div>
+
+      <div class="admin-panel-card" style="max-width:520px; margin-bottom:20px;" id="usersCard">
+        <div class="admin-panel-head"><h2>Users</h2></div>
+        <p class="form-note" style="margin-top:-8px;"><strong>Admin</strong> — full access, can manage users. <strong>Editor</strong> — can add/edit products, can't delete or reset. <strong>Viewer</strong> — read-only, can see products &amp; enquiries only.</p>
+        <div id="usersList" style="margin-bottom:16px;"></div>
+        <form id="addUserForm" style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">
+          <div class="field" style="flex:1; min-width:200px; margin-bottom:0;">
+            <label for="newUserEmail">Gmail address</label>
+            <input type="email" id="newUserEmail" required placeholder="someone@gmail.com">
+          </div>
+          <div class="field" style="margin-bottom:0;">
+            <label for="newUserRole">Role</label>
+            <select class="select" id="newUserRole">
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-navy">Add User</button>
+        </form>
+        <p class="form-note" id="addUserMsg"></p>
       </div>
 
       <div class="admin-panel-card" style="max-width:480px;">

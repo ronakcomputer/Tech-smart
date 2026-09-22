@@ -34,14 +34,14 @@ const TS_FIREBASE_CONFIG = {
 };
 
 /* ============================================================
-   TechSmart — Admin allow-list
+   TechSmart — Bootstrap owner account
    ------------------------------------------------------------
-   Only the Google account(s) listed here can open the Admin
-   Panel. Anyone signs in with Google, but if their email isn't
-   in this list, they're signed out immediately and refused
-   entry. Add more emails (comma-separated) if more staff need
-   access later.
+   This one email always has full Admin access, no matter what —
+   even if the "admins" list in Firestore is empty, broken, or
+   this email hasn't been added to it. This is your permanent
+   safety net so you can never get locked out of your own admin
+   panel. Everyone else's access (Admin / Editor / Viewer) is
+   managed from the Settings → Users tab inside the admin panel
+   itself, once you're signed in.
    ============================================================ */
-const TS_ADMIN_ALLOWED_EMAILS = [
-  "ronakcomputerbhl@gmail.com"
-];
+const TS_BOOTSTRAP_ADMIN_EMAIL = "ronakcomputerbhl@gmail.com";
