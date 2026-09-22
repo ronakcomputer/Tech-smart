@@ -14,7 +14,7 @@ contact.html       Address, map, hours, contact form
 admin/index.html   Admin panel (login-protected) — add/edit/delete products
 assets/css/        Stylesheets
 assets/js/         All site logic + product data
-  firebase-config.js  Firebase project keys + admin allow-list (TS_ADMIN_ALLOWED_EMAILS)
+  firebase-config.js  Firebase project keys + TS_BOOTSTRAP_ADMIN_EMAIL (your permanent owner login)
 robots.txt         Tells search engines what to crawl
 sitemap.xml        List of pages for Google Search Console
 ```
@@ -67,10 +67,16 @@ The pages currently reference a placeholder domain: `https://www.techsmartchitto
 
 Open **admin/index.html** (or click "Admin Login" in the website footer).
 
-- **Login is Google Sign-In** — click "Sign in with Google" and choose your Google account. Only the email address(es) listed in `assets/js/firebase-config.js` → `TS_ADMIN_ALLOWED_EMAILS` are let in; anyone else is signed out immediately with a message. Currently allowed: `ronakcomputerbhl@gmail.com`. To add more staff, add their Gmail address to that array (comma-separated), and add the same address to the Firestore rules in section 3a below.
+- **Login is Google Sign-In** — click "Sign in with Google" and choose your Google account.
+- **Roles:** there are three levels of access —
+  - **Admin** — full access: add/edit/delete products, reset the catalogue, and add/remove other users.
+  - **Editor** — can add and edit products, and view enquiries, but can't delete products or manage users.
+  - **Viewer** — read-only: can see the product list and enquiries, but no editing.
+- One email — `ronakcomputerbhl@gmail.com` (set as `TS_BOOTSTRAP_ADMIN_EMAIL` in `assets/js/firebase-config.js`) — is your **permanent owner login** and always has full Admin access, even if something goes wrong with the Users list, so you can never get locked out.
+- **To add more staff:** sign in as the owner → **Settings tab → Users** → enter their Gmail address, pick a role (Admin/Editor/Viewer), click **Add User**. No code changes or redeploying needed — it takes effect the next time they sign in. To remove someone, click **Remove** next to their name.
 - Once inside, the topbar and the Settings tab show **who is currently signed in** (name, email, photo) — so you always know which account made changes.
 - From the **Products** tab you can Add, Edit or Delete any laptop or printer — brand, model, configuration, price, photo and Available/Out of Stock status.
-- From the **Enquiries** tab you can see a backup log of enquiries submitted on that browser (the actual enquiry always also goes straight to your WhatsApp — this tab is just a convenience).
+- From the **Enquiries** tab you can see every enquiry submitted through the site — from any visitor, on any device — appearing live, the moment it's submitted (once Cloud Setup below is done). Every enquiry always also goes straight to your WhatsApp — the panel is an extra way to make sure nothing is missed if a customer closes WhatsApp before tapping Send.
 - Product photos: upload a photo (under 1.5MB) or paste an image URL. If you leave it blank, a neat placeholder graphic is shown automatically.
 
 ### How product data is stored
@@ -91,7 +97,7 @@ This connects the admin panel to **Firebase Firestore**, a free cloud database f
 1. In the Firebase console, go to **Build → Authentication → Get started**.
 2. Under the **Sign-in method** tab, click **Google**, toggle it **Enable**, pick a support email, and **Save**.
 3. Still in Authentication, go to **Settings → Authorized domains** and make sure your live domain (e.g. `techsmartchittorgarh.com`) is listed — `localhost` is already there by default for local testing.
-4. Open `assets/js/firebase-config.js` and set `TS_ADMIN_ALLOWED_EMAILS` to the Gmail address(es) that should be allowed into the admin panel.
+4. Open `assets/js/firebase-config.js` and check `TS_BOOTSTRAP_ADMIN_EMAIL` is set to your own Gmail address — this account always has full Admin access. Add any other staff later from inside the admin panel (Settings → Users) instead of editing this file.
 
 **Step 1 — Create a Firebase project**
 1. Go to [console.firebase.google.com](https://console.firebase.google.com) and sign in with any Google account.
@@ -115,22 +121,42 @@ This connects the admin panel to **Firebase Firestore**, a free cloud database f
    rules_version = '2';
    service cloud.firestore {
      match /databases/{database}/documents {
+
+       function myRole() {
+         return exists(/databases/$(database)/documents/admins/$(request.auth.token.email))
+           ? get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.role
+           : null;
+       }
+       function isAdmin()  { return request.auth != null &&
+         (request.auth.token.email == 'ronakcomputerbhl@gmail.com' || myRole() == 'admin'); }
+       function isEditor() { return request.auth != null && myRole() == 'editor'; }
+       function isViewer() { return request.auth != null && myRole() == 'viewer'; }
+       function isStaff()  { return isAdmin() || isEditor() || isViewer(); }
+
        match /products/{productId} {
          allow read: if true;
-         allow write: if request.auth != null &&
-           request.auth.token.email in ['ronakcomputerbhl@gmail.com'];
+         allow create, update: if isAdmin() || isEditor();
+         allow delete: if isAdmin();
        }
        match /meta/{docId} {
          allow read: if true;
-         allow write: if request.auth != null &&
-           request.auth.token.email in ['ronakcomputerbhl@gmail.com'];
+         allow write: if isAdmin() || isEditor();
+       }
+       match /leads/{leadId} {
+         allow create: if true;
+         allow read: if isStaff();
+         allow update, delete: if isAdmin();
+       }
+       match /admins/{email} {
+         allow read: if isStaff();
+         allow write: if isAdmin();
        }
      }
    }
    ```
 2. Click **Publish**.
 
-   > **Why this rule?** Everyone can still *read* the catalogue (that's how customers browse laptops/printers), but only a request coming from someone signed in with an email in that list can *write* (add/edit/delete). This is enforced by Google's servers, not just hidden in the browser — so it's real security, matching the admin panel's Google Sign-In. If you add more admin emails to `TS_ADMIN_ALLOWED_EMAILS` in `firebase-config.js`, add the exact same emails inside the `['...']` list here (both places must always match).
+   > **Why this rule?** Everyone can still *read* the catalogue and *create* an enquiry (how customers browse and contact you) — but products/enquiries can only be changed by someone signed in whose email is either the permanent owner account, or listed with a role in the `admins` collection (which you manage from Settings → Users in the admin panel — no need to ever touch this rule text again). Admins get full access; Editors can add/edit but not delete; Viewers can only read. This is enforced by Google's servers, not just hidden in the browser — so it's real security, matching the admin panel's Google Sign-In.
 
 **Step 5 — Test it**
 1. Re-upload the whole `techsmart` folder to your hosting (all files changed slightly — Firestore support was added throughout).
